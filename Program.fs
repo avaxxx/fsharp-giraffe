@@ -13,6 +13,9 @@ open Giraffe
 open FSharp.Control.Tasks
 open System.IdentityModel.Tokens.Jwt;
 open Microsoft.AspNetCore.Authentication.OpenIdConnect
+open Microsoft.AspNetCore.Authentication.JwtBearer
+open Microsoft.IdentityModel.Tokens
+open Microsoft.AspNetCore.Authorization
 
 
 // ---------------------------------
@@ -116,13 +119,21 @@ let submitFooHandler : HttpHandler =
 
 // let mustBeLoggedIn = requiresAuthentication notLoggedIn
 
-let authenticate : HttpHandler =
+//oidc
+let authenticateOidc : HttpHandler =
   challenge "oidc"
   |> requiresAuthentication
 
-let signIn (next : HttpFunc) (ctx : HttpContext) =
-  authenticate next ctx
+let signInOidc (next : HttpFunc) (ctx : HttpContext) =
+  authenticateOidc next ctx
 
+//bearer
+let authenticateBearer : HttpHandler =
+  challenge "Bearer"
+  |> requiresAuthentication
+
+let signInBearer (next : HttpFunc) (ctx : HttpContext) =
+  authenticateBearer next ctx
 
 let webApp =
     choose [
@@ -131,7 +142,10 @@ let webApp =
                 route "/" >=> indexHandler "world"
                 routef "/hello/%s" indexHandler
                 routef "/json/%s" indexHandlerJson
-                route "/json" >=> signIn >=> sayHelloWorldJson
+                //oidc
+                route "/jsonOidc" >=> signInOidc >=> sayHelloWorldJson
+                //bearer
+                route "/jsonBearer" >=> signInBearer >=> sayHelloWorldJson
                 route "/jsonwithparam" >=>  sayHelloWorld 
                 subRoute "/api"
                     (choose [
@@ -202,24 +216,40 @@ let configureApp (app : IApplicationBuilder) =
 let configureServices (services : IServiceCollection) =
     services.AddCors()    |> ignore
     services.AddAuthorization() |> ignore
-    services.AddAuthentication(fun options ->
-            options.DefaultScheme <- "Cookies";
-            options.DefaultChallengeScheme <- "oidc";
-        )
-        .AddCookie("Cookies")
-        .AddOpenIdConnect("oidc", fun options ->
-            options.Authority <- "http://sts.decky.eu";
+    
+    //OIDC 
+    // services.AddAuthentication(fun options ->
+    //         options.DefaultScheme <- "Cookies";
+    //         options.DefaultChallengeScheme <- "oidc";
+    //     )
+    //     .AddCookie("Cookies")
+    //     .AddOpenIdConnect("oidc", fun options ->
+    //         options.Authority <- "http://identity.decky.eu";
 
-            options.ClientId <- "mvcclient";
-            options.ClientSecret <- "secret";
-            options.ResponseType <- "code";
-            options.RequireHttpsMetadata <- false;
-            options.SaveTokens <- true;
-            options.UsePkce <- true;
+    //         options.ClientId <- "mvcclient2";
+    //         options.ClientSecret <- "secret";
+    //         options.ResponseType <- "code";
+    //         options.RequireHttpsMetadata <- false;
+    //         options.SaveTokens <- true;
+    //         options.UsePkce <- true;
+    //     ) |> ignore
+
+    //bearer
+    services.AddAuthentication("Bearer")
+        .AddJwtBearer("Bearer", fun options ->
+            options.Authority <- "http://identity.decky.eu"
+            options.RequireHttpsMetadata <- false
+            options.TokenValidationParameters <- TokenValidationParameters(ValidateAudience = false)
         ) |> ignore
 
-    services.AddGiraffe() |> ignore
+    services.AddAuthorization(fun options -> 
+        options.AddPolicy("local-api-scope", fun builder -> 
+                builder.RequireAuthenticatedUser() |> ignore 
+                builder.RequireClaim("scope", "local-api-scope") |> ignore
+            )
+    ) |> ignore
 
+    services.AddGiraffe() |> ignore 
 
 let configureLogging (builder : ILoggingBuilder) =
     builder.AddConsole()
